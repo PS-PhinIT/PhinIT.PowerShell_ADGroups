@@ -18,6 +18,8 @@ LogFileName=easyADGroups.log
 LogActive=1
 ; Mindest-Level: DEBUG | INFO | WARNING | ERROR
 LogLevel=INFO
+; Log-Dateien älter als x Tage werden beim Start gelöscht (0 = nie löschen)
+LogRetentionDays=30
 
 [GUI]
 AppName=easyADgroup
@@ -33,7 +35,8 @@ AppInfoText=ScriptVersion | LastUpdate | Author | WebsiteURLText
 [AD]
 ; Domain Controller (leer = automatisch ermitteln). Alle AD-Aktionen laufen gegen diesen DC.
 ADServer=
-; Maximale Anzahl Benutzer in der Mitgliederliste (0 = alle)
+; Maximale Anzahl Benutzer in der Mitgliederliste (0 = alle).
+; Ist die Liste dadurch gekürzt, sucht die Benutzersuche direkt im AD (auch nicht geladene Benutzer werden gefunden).
 MaxUsersToLoad=500
 ; Fallback-OU für CSV-Zeilen ohne OU (leer = aktuell ausgewählte OU)
 DefaultGroupOU=

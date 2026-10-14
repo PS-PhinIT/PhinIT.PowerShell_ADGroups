@@ -1,5 +1,5 @@
-# Laufzeitdaten (Logs, Vorlagen, lokale Konfiguration)
-/logs/
-/templates/
-/easyADGroups.ini
+# Laufzeitdaten (Logs, Vorlagen, lokale Konfiguration) - werden neben dem Script in src/ erzeugt
+logs/
+templates/
+easyADGroups.ini
 *.log

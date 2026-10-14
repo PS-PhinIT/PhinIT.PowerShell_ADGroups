@@ -4,7 +4,8 @@
   # Author:         Andreas Hepp
   # Website:        https://phinit.de/easyit-tools/
   # GitHub:         https://github.com/PS-PhinIT/PhinIT.PowerShell_ADGroups
-  # Version:        0.3.2 (Build: 2026-10-14)
+  # Version:        0.3.3 (Build: 2026-10-14)
+  # File:           easyADGroup.ps1 (version is maintained in README.md and CHANGELOG.md, not in the file name)
   ####################################################################################################
 
   WPF-based GUI for creating Active Directory groups.
@@ -23,7 +24,7 @@
   Requirements:
   - Windows PowerShell 5.1 or PowerShell 7+ (Windows, STA mode)
   - ActiveDirectory PowerShell module (RSAT)
-  - Administrator privileges and AD permissions to create groups
+  - AD permissions to create groups (and OUs, if Auto-create OU is used); local administrator rights are not required
 
   Configuration:
   - Embedded defaults (section 4.0), optionally overridden by "easyADGroups.ini"
@@ -36,7 +37,6 @@
 
 #Requires -Version 5.1
 #Requires -Modules ActiveDirectory
-#Requires -RunAsAdministrator
 
 # [1.0 | SCRIPT PATH DETECTION]
 #region Script Path Detection
@@ -58,7 +58,7 @@ if ([System.Threading.Thread]::CurrentThread.GetApartmentState() -ne [System.Thr
 }
 
 # [2.2 | ACTIVE DIRECTORY MODULE]
-# Version, admin rights and module availability are enforced by the #Requires statements above.
+# PowerShell version and module availability are enforced by the #Requires statements above.
 if (-not (Get-Module -Name ActiveDirectory)) {
     try {
         Import-Module ActiveDirectory -ErrorAction Stop
@@ -74,7 +74,7 @@ if (-not (Get-Module -Name ActiveDirectory)) {
 # [3.0 | TYPE IMPORTS AND ASSEMBLIES]
 #region Type Imports
 # WPF-spezifische Assemblies laden
-Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, Microsoft.VisualBasic
+Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
 #endregion
 
 # [3.1 | GLOBAL VARIABLES INITIALIZATION]
@@ -84,6 +84,8 @@ $script:allUsers = New-Object System.Collections.ObjectModel.ObservableCollectio
 $script:filteredUsers = New-Object System.Collections.ObjectModel.ObservableCollection[PSObject]
 $script:templates = @{}
 $script:searchTimer = $null
+$script:isBusy = $false
+$script:userListTruncated = $false
 
 # [4.0 | EMBEDDED CONFIGURATION]
 #region Embedded Configuration
@@ -92,7 +94,7 @@ $script:searchTimer = $null
 # [ENGLISH - Embedded defaults. Values can be overridden by easyADGroups.ini (same section/key names)]
 # [GERMAN - Eingebettete Standardwerte. Können über easyADGroups.ini überschrieben werden (gleiche Abschnitte/Schlüssel)]
 $generalConfig = @{
-    ScriptVersion = "0.3.2"
+    ScriptVersion = "0.3.3"
     LastUpdate = "14.10.2026"
     Author = "Andreas Hepp"
     WebsiteURL = "https://phinit.de/easyit-tools"
@@ -104,6 +106,8 @@ $loggingConfig = @{
     LogFileName = "easyADGroups.log"
     LogActive = "1"
     LogLevel = "INFO"
+    # Log-Dateien älter als x Tage beim Start löschen (0 = nie löschen)
+    LogRetentionDays = "30"
 }
 
 $guiConfig = @{
@@ -241,6 +245,22 @@ if ($generalConfig.Debug -eq "1") {
     Write-Host "DEBUG-MODUS AKTIVIERT" -ForegroundColor Cyan
 }
 
+# [4.5.1 | NUMERIC CONFIGURATION VALUES]
+# [ENGLISH - Parses numeric configuration values; invalid INI values fall back to the default instead of throwing]
+# [GERMAN - Liest numerische Konfigurationswerte; ungültige INI-Werte führen zum Standardwert statt zu einer Ausnahme]
+function Get-ConfigInt {
+    param(
+        [object]$Value,
+        [int]$Default,
+        [int]$Minimum = 0
+    )
+    $number = 0
+    if ([int]::TryParse("$Value".Trim(), [ref]$number) -and $number -ge $Minimum) {
+        return $number
+    }
+    return $Default
+}
+
 # [4.6 | PLACEHOLDER REPLACEMENT]
 # [ENGLISH - Function to replace placeholders in text]
 # [GERMAN - Funktion zum Ersetzen von Platzhaltern in Texten]
@@ -287,6 +307,15 @@ if ($loggingConfig.LogActive -eq "1") {
 
         "Log file initialized at $(Get-Date)" | Out-File -FilePath $script:config.LogPath -Encoding UTF8 -ErrorAction Stop
         Write-Host "Log file created: $($script:config.LogPath)" -ForegroundColor Gray
+
+        # Alte Log-Dateien entfernen (verhindert unbegrenztes Wachstum des Log-Ordners)
+        $retentionDays = Get-ConfigInt -Value $loggingConfig.LogRetentionDays -Default 30
+        if ($retentionDays -gt 0) {
+            $cutoff = (Get-Date).AddDays(-$retentionDays)
+            Get-ChildItem -LiteralPath $logDir -Filter "LOG_easyADGroups-*" -File -ErrorAction SilentlyContinue |
+                Where-Object { $_.LastWriteTime -lt $cutoff } |
+                Remove-Item -Force -ErrorAction SilentlyContinue
+        }
     }
     catch {
         Write-Host "WARNING: Cannot create log file: $($_.Exception.Message)" -ForegroundColor Yellow
@@ -504,6 +533,79 @@ function Show-SelectionDialog {
     return $null
 }
 
+function Show-InputDialog {
+    # [7.0.2 | TEXT INPUT DIALOG]
+    # [ENGLISH - Small modal WPF dialog for a single text input (replaces Microsoft.VisualBasic InputBox)]
+    # [GERMAN - Kleiner modaler WPF-Dialog für eine Texteingabe (ersetzt Microsoft.VisualBasic InputBox)]
+    param(
+        [string]$Title,
+        [string]$Prompt,
+        [string]$DefaultText = ""
+    )
+
+    $dialog = New-Object System.Windows.Window
+    $dialog.Title = $Title
+    $dialog.Width = 380
+    $dialog.SizeToContent = [System.Windows.SizeToContent]::Height
+    $dialog.WindowStartupLocation = [System.Windows.WindowStartupLocation]::CenterOwner
+    $dialog.ResizeMode = [System.Windows.ResizeMode]::NoResize
+    if ($script:window) { $dialog.Owner = $script:window }
+
+    $panel = New-Object System.Windows.Controls.StackPanel
+    $panel.Margin = [System.Windows.Thickness]::new(12)
+
+    $label = New-Object System.Windows.Controls.TextBlock
+    $label.Text = $Prompt
+    $label.TextWrapping = [System.Windows.TextWrapping]::Wrap
+    $label.Margin = [System.Windows.Thickness]::new(0, 0, 0, 8)
+    [void]$panel.Children.Add($label)
+
+    $textBox = New-Object System.Windows.Controls.TextBox
+    $textBox.Text = $DefaultText
+    $textBox.MaxLength = 100
+    [void]$panel.Children.Add($textBox)
+
+    $buttons = New-Object System.Windows.Controls.StackPanel
+    $buttons.Orientation = [System.Windows.Controls.Orientation]::Horizontal
+    $buttons.HorizontalAlignment = [System.Windows.HorizontalAlignment]::Right
+    $buttons.Margin = [System.Windows.Thickness]::new(0, 12, 0, 0)
+
+    $okButton = New-Object System.Windows.Controls.Button
+    $okButton.Content = "OK"
+    $okButton.Width = 80
+    $okButton.IsDefault = $true
+    $okButton.Margin = [System.Windows.Thickness]::new(0, 0, 8, 0)
+    $cancelButton = New-Object System.Windows.Controls.Button
+    $cancelButton.Content = "Abbrechen"
+    $cancelButton.Width = 80
+    $cancelButton.IsCancel = $true
+    [void]$buttons.Children.Add($okButton)
+    [void]$buttons.Children.Add($cancelButton)
+    [void]$panel.Children.Add($buttons)
+
+    $okButton.Add_Click({ $dialog.DialogResult = $true })
+    $dialog.Add_ContentRendered({ [void]$textBox.Focus(); $textBox.SelectAll() })
+
+    $dialog.Content = $panel
+    if ($dialog.ShowDialog() -eq $true) {
+        return $textBox.Text
+    }
+    return $null
+}
+
+function ConvertTo-SafeTemplateName {
+    # [7.0.3 | TEMPLATE FILE NAME]
+    # [ENGLISH - Restricts template names to safe file names (no paths, no reserved device names)]
+    # [GERMAN - Beschränkt Vorlagennamen auf sichere Dateinamen (keine Pfade, keine reservierten Gerätenamen)]
+    param(
+        [string]$Name
+    )
+    $safeName = ("$Name" -replace '[^\w\-\. ]', '_').Trim(' ', '.')
+    if ($safeName.Length -gt 100) { $safeName = $safeName.Substring(0, 100).Trim(' ', '.') }
+    if ($safeName -match '^(CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9])(\..*)?$') { $safeName = "_$safeName" }
+    return $safeName
+}
+
 function Save-GroupTemplate {
     param(
         [string]$TemplateName
@@ -681,10 +783,11 @@ function Import-CSVGroup {
         if ($openDialog.ShowDialog() -ne $true) { return }
 
         # Dateigröße prüfen
-        $maxBytes = [int]$csvConfig.MaxCSVFileSizeMB * 1MB
+        $maxSizeMB = Get-ConfigInt -Value $csvConfig.MaxCSVFileSizeMB -Default 10 -Minimum 1
+        $maxBytes = [long]$maxSizeMB * 1MB
         $fileInfo = Get-Item -LiteralPath $openDialog.FileName -ErrorAction Stop
         if ($fileInfo.Length -gt $maxBytes) {
-            [System.Windows.MessageBox]::Show("Die CSV-Datei ist größer als $($csvConfig.MaxCSVFileSizeMB) MB.", "CSV-Import") | Out-Null
+            [System.Windows.MessageBox]::Show("Die CSV-Datei ist größer als $maxSizeMB MB.", "CSV-Import") | Out-Null
             return
         }
 
@@ -693,12 +796,13 @@ function Import-CSVGroup {
             [System.Windows.MessageBox]::Show("Die CSV-Datei enthält keine Datenzeilen.", "CSV-Import") | Out-Null
             return
         }
-        if ($csvData.Count -gt [int]$validationConfig.MaxGroupsPerBatch) {
-            [System.Windows.MessageBox]::Show("Die CSV-Datei enthält $($csvData.Count) Zeilen (max. $($validationConfig.MaxGroupsPerBatch) pro Vorgang).", "CSV-Import") | Out-Null
+        $maxBatch = Get-ConfigInt -Value $validationConfig.MaxGroupsPerBatch -Default 1000 -Minimum 1
+        if ($csvData.Count -gt $maxBatch) {
+            [System.Windows.MessageBox]::Show("Die CSV-Datei enthält $($csvData.Count) Zeilen (max. $maxBatch pro Vorgang).", "CSV-Import") | Out-Null
             return
         }
         if (-not ($csvData[0].PSObject.Properties.Name -contains 'GroupName')) {
-            [System.Windows.MessageBox]::Show("Die Spalte 'GroupName' fehlt. Bitte die CSV-Vorlage verwenden.", "CSV-Import") | Out-Null
+            [System.Windows.MessageBox]::Show("Die Spalte 'GroupName' fehlt. Bitte die CSV-Vorlage verwenden und das Trennzeichen prüfen (konfiguriert: '$($csvConfig.CSVDelimiter)').", "CSV-Import") | Out-Null
             return
         }
 
@@ -783,9 +887,34 @@ function New-GroupFromCSV {
     try {
         $existing = if ($chkCheckDuplicates.IsChecked) { Get-ExistingGroupSam -SamAccountNames ($Groups | ForEach-Object { $_.SamAccountName }) } else { @() }
 
+        # Jede Ziel-OU nur einmal prüfen bzw. anlegen (statt einer AD-Abfrage pro Zeile)
+        $createOU = ($chkCreateOUIfNotExists.IsChecked -eq $true)
+        $ouStatus = @{}
+        foreach ($ou in ($Groups | ForEach-Object { $_.OU } | Select-Object -Unique)) {
+            if ($createOU -and -not $dryRun) {
+                $ouStatus[$ou] = [bool](Initialize-OrganizationalUnit -OUPath $ou)
+            }
+            else {
+                try {
+                    Get-ADOrganizationalUnit -Identity $ou -ErrorAction Stop | Out-Null
+                    $ouStatus[$ou] = $true
+                }
+                catch {
+                    # Im Testlauf mit "Auto-create OU" würde die OU angelegt werden
+                    $ouStatus[$ou] = ($createOU -and $dryRun)
+                    if ($ouStatus[$ou]) { Write-LogMessage "TESTLAUF: OU '$ou' würde erstellt werden" -logLevel "INFO" }
+                }
+            }
+        }
+
         foreach ($group in $Groups) {
             try {
-                if ($existing -contains $group.SamAccountName) {
+                if (-not $ouStatus[$group.OU]) {
+                    $skipped++
+                    $errors.Add("OU für '$($group.Name)' existiert nicht oder konnte nicht erstellt werden: $($group.OU)")
+                    Write-LogMessage "CSV-Gruppe '$($group.Name)' übersprungen - OU nicht verfügbar: $($group.OU)" -logLevel "WARNING"
+                }
+                elseif ($existing -contains $group.SamAccountName) {
                     $skipped++
                     Write-LogMessage "CSV-Gruppe '$($group.Name)' existiert bereits - wird übersprungen" -logLevel "WARNING"
                 }
@@ -794,9 +923,6 @@ function New-GroupFromCSV {
                     [void]$script:createdGroups.Add("[TESTLAUF] $($group.Name)")
                 }
                 else {
-                    if ($chkCreateOUIfNotExists.IsChecked -eq $true -and -not (Initialize-OrganizationalUnit -OUPath $group.OU)) {
-                        throw "OU '$($group.OU)' konnte nicht erstellt werden"
-                    }
 
                     $params = @{
                         Name = $group.Name
@@ -895,8 +1021,15 @@ function Search-User {
 
     try {
         $term = "$SearchTerm".Trim()
+        $serverSearch = $false
         if ([string]::IsNullOrWhiteSpace($term)) {
             $matchingUsers = $script:allUsers
+        }
+        elseif ($script:userListTruncated -and $term -notmatch '^[\*\?\s]+$') {
+            # Liste ist durch MaxUsersToLoad gekürzt: serverseitig suchen, damit auch nicht geladene Benutzer gefunden werden
+            $pattern = ConvertTo-LdapSearchPattern -Term $term
+            $matchingUsers = @(Get-ADUserList -LdapFilter "(|(sAMAccountName=$pattern)(displayName=$pattern))")
+            $serverSearch = $true
         }
         elseif ([System.Management.Automation.WildcardPattern]::ContainsWildcardCharacters($term)) {
             # Platzhalter (* ?) werden unterstützt
@@ -912,7 +1045,8 @@ function Search-User {
 
         Set-UserListSource -Items $matchingUsers
 
-        Update-StatusLabel "Suche abgeschlossen: $($script:filteredUsers.Count) Benutzer gefunden, $($script:selectedUserSet.Count) ausgewählt"
+        $searchInfo = if ($serverSearch) { " (AD-Suche)" } else { "" }
+        Update-StatusLabel "Suche abgeschlossen$($searchInfo): $($script:filteredUsers.Count) Benutzer gefunden, $($script:selectedUserSet.Count) ausgewählt"
         Write-DebugMessage "User search for '$term': $($script:filteredUsers.Count) results"
     }
     catch {
@@ -948,13 +1082,17 @@ function Get-ADUserList {
     # [9.1 | USER RETRIEVAL]
     # [ENGLISH - Loads at most MaxUsersToLoad users from AD (server-side limit) and prepares display objects]
     # [GERMAN - Lädt höchstens MaxUsersToLoad Benutzer aus AD (serverseitig begrenzt) und bereitet Anzeigeobjekte vor]
+    param(
+        # Optionaler LDAP-Filter für die serverseitige Suche (Standard: alle Benutzer)
+        [string]$LdapFilter
+    )
     $params = @{
-        Filter = '*'
         Properties = 'DisplayName'
         ErrorAction = 'Stop'
     }
-    $maxUsers = 0
-    if ([int]::TryParse("$($adConfig.MaxUsersToLoad)", [ref]$maxUsers) -and $maxUsers -gt 0) {
+    if ($LdapFilter) { $params.LDAPFilter = $LdapFilter } else { $params.Filter = '*' }
+    $maxUsers = Get-ConfigInt -Value $adConfig.MaxUsersToLoad -Default 500
+    if ($maxUsers -gt 0) {
         $params.ResultSetSize = $maxUsers
     }
 
@@ -968,12 +1106,35 @@ function Get-ADUserList {
         Sort-Object DisplayText
 }
 
+function Test-UserListTruncated {
+    # [9.1.1 | LIMIT CHECK]
+    # [ENGLISH - True if the user list was cut off by MaxUsersToLoad (search must then query AD)]
+    # [GERMAN - True, wenn die Benutzerliste durch MaxUsersToLoad gekürzt wurde (Suche muss dann AD abfragen)]
+    param(
+        [int]$Count
+    )
+    $maxUsers = Get-ConfigInt -Value $adConfig.MaxUsersToLoad -Default 500
+    return ($maxUsers -gt 0 -and $Count -ge $maxUsers)
+}
+
+function ConvertTo-LdapSearchPattern {
+    # [9.1.2 | SEARCH TERM TO LDAP]
+    # [ENGLISH - Converts a search term (with * and ? wildcards) into an escaped LDAP substring pattern]
+    # [GERMAN - Wandelt einen Suchbegriff (mit Platzhaltern * und ?) in ein maskiertes LDAP-Teilstring-Muster um]
+    param(
+        [string]$Term
+    )
+    $parts = @("$Term" -split '[\*\?]+' | ForEach-Object { ConvertTo-LdapFilterValue -Value $_ })
+    return ('*' + ($parts -join '*') + '*') -replace '\*{2,}', '*'
+}
+
 function Update-UserList {
     Update-StatusLabel "Aktualisiere Benutzerliste..."
 
     try {
         $script:allUsers = New-Object System.Collections.ObjectModel.ObservableCollection[PSObject]
         foreach ($user in (Get-ADUserList)) { $script:allUsers.Add($user) }
+        $script:userListTruncated = Test-UserListTruncated -Count $script:allUsers.Count
 
         # Gefilterte Liste neu aufbauen (Auswahl bleibt erhalten)
         Search-User -SearchTerm $textBoxUserSearch.Text
@@ -1042,6 +1203,7 @@ function Get-ADData {
         $script:allUsers = New-Object System.Collections.ObjectModel.ObservableCollection[PSObject]
         try {
             foreach ($user in (Get-ADUserList)) { $script:allUsers.Add($user) }
+            $script:userListTruncated = Test-UserListTruncated -Count $script:allUsers.Count
             Write-DebugMessage "Benutzerabfrage erfolgreich: $($script:allUsers.Count) Benutzer geladen"
         }
         catch {
@@ -1155,10 +1317,17 @@ function Set-BusyState {
     # [10.5 | BUSY STATE]
     # [ENGLISH - Disables action buttons and shows the progress bar during long operations]
     # [GERMAN - Deaktiviert Aktions-Buttons und zeigt den Fortschrittsbalken während langer Vorgänge]
+    # Update-UI verarbeitet auch Eingaben - daher alle Aktionen sperren (keine Mehrfachausführung/Reentrancy)
     param(
         [bool]$Busy
     )
-    foreach ($control in @($buttonCreate, $buttonPreview, $buttonImportCSV, $buttonLoadTemplate, $buttonReset, $buttonRefreshUsers)) {
+    $script:isBusy = $Busy
+    $actionControls = @(
+        $buttonCreate, $buttonPreview, $buttonImportCSV, $buttonDownloadTemplate, $buttonLoadTemplate, $buttonSaveTemplate,
+        $buttonReset, $buttonRefreshUsers, $buttonSearchUsers, $buttonSelectAllUsers, $buttonDeselectAllUsers,
+        $buttonTestEmail, $buttonReport, $buttonHelp, $buttonClose
+    )
+    foreach ($control in $actionControls) {
         if ($control) { $control.IsEnabled = -not $Busy }
     }
     $progressBarMain.Value = 0
@@ -1201,7 +1370,7 @@ function Test-GroupName {
         if ($invalidChars.Count -gt 0) {
             $nameErrors += "'$Name' enthält ungültige Zeichen: $($invalidChars -join ' ')"
         }
-        $maxLength = [int]$validationConfig.MaxGroupNameLength
+        $maxLength = Get-ConfigInt -Value $validationConfig.MaxGroupNameLength -Default 64
         if ($maxLength -gt 0 -and $Name.Length -gt $maxLength) {
             $nameErrors += "'$Name' ist zu lang (max. $maxLength Zeichen)"
         }
@@ -1246,8 +1415,9 @@ function Test-Input {
             }
 
             # [11.1.1.4 | RANGE SIZE CHECK]
-            if (($errors.Count -eq 0) -and (($endNum - $startNum + 1) -gt [int]$validationConfig.MaxGroupsPerBatch)) {
-                $errors += "Nummernbereich zu groß (max. $($validationConfig.MaxGroupsPerBatch) Gruppen pro Vorgang)"
+            $maxBatch = Get-ConfigInt -Value $validationConfig.MaxGroupsPerBatch -Default 1000 -Minimum 1
+            if (($errors.Count -eq 0) -and (([long]$endNum - $startNum + 1) -gt $maxBatch)) {
+                $errors += "Nummernbereich zu groß (max. $maxBatch Gruppen pro Vorgang)"
             }
         }
     } else {
@@ -1434,7 +1604,7 @@ function Send-EmailNotification {
         $message.BodyEncoding = [System.Text.Encoding]::UTF8
         $message.SubjectEncoding = [System.Text.Encoding]::UTF8
 
-        $smtpClient = New-Object System.Net.Mail.SmtpClient ($emailConfig.SMTPServer, [int]$emailConfig.SMTPPort)
+        $smtpClient = New-Object System.Net.Mail.SmtpClient ($emailConfig.SMTPServer, (Get-ConfigInt -Value $emailConfig.SMTPPort -Default 25 -Minimum 1))
         $smtpClient.EnableSsl = ($emailConfig.SMTPUseSsl -eq "1")
         # Keine Passwörter in der Konfiguration: Anmeldung mit dem aktuellen Windows-Konto (oder anonymes Relay)
         $smtpClient.UseDefaultCredentials = $true
@@ -1731,10 +1901,10 @@ function Add-ButtonEventHandler {
     $buttonSaveTemplate.Add_Click({
         Write-DebugMessage "Vorlagen-Speichern-Button geklickt"
 
-        $templateName = [Microsoft.VisualBasic.Interaction]::InputBox("Geben Sie einen Namen für die Vorlage ein:", "Vorlage speichern", "Meine_Vorlage")
+        $templateName = Show-InputDialog -Title "Vorlage speichern" -Prompt "Geben Sie einen Namen für die Vorlage ein:" -DefaultText "Meine_Vorlage"
 
-        # Nur sichere Dateinamen zulassen (keine Pfade, keine reservierten Zeichen)
-        $templateName = ($templateName -replace '[^\w\-\. ]', '_').Trim(' ', '.')
+        # Nur sichere Dateinamen zulassen (keine Pfade, keine reservierten Zeichen/Gerätenamen)
+        $templateName = ConvertTo-SafeTemplateName -Name $templateName
         if (-not [string]::IsNullOrWhiteSpace($templateName)) {
             Save-GroupTemplate -TemplateName $templateName
         }
@@ -1796,6 +1966,8 @@ function Add-ButtonEventHandler {
     $script:searchTimer = New-Object System.Windows.Threading.DispatcherTimer
     $script:searchTimer.Interval = [TimeSpan]::FromMilliseconds([Math]::Max(0, $searchDelay))
     $script:searchTimer.Add_Tick({
+        # Während eines laufenden Vorgangs später erneut versuchen
+        if ($script:isBusy) { return }
         $script:searchTimer.Stop()
         Search-User -SearchTerm $textBoxUserSearch.Text
     })
@@ -1868,6 +2040,14 @@ function Add-ButtonEventHandler {
     $buttonClose.Add_Click({
         Write-LogMessage "Anwendung wird beendet" -logLevel "INFO"
         $window.Close()
+    })
+
+    $window.Add_Closing({
+        # Schließen während einer laufenden Erstellung verhindern (unvollständige Vorgänge)
+        if ($script:isBusy) {
+            $_.Cancel = $true
+            [System.Windows.MessageBox]::Show("Bitte warten, bis der laufende Vorgang abgeschlossen ist.", "Vorgang läuft") | Out-Null
+        }
     })
 
     $window.Add_Closed({
@@ -2028,9 +2208,11 @@ function Initialize-MainApplication {
                                 <Popup x:Name="Popup" Placement="Bottom" IsOpen="{TemplateBinding IsDropDownOpen}"
                                        AllowsTransparency="True" Focusable="False" PopupAnimation="Slide">
                                     <Border Background="White" BorderBrush="#D2D0CE" BorderThickness="1" CornerRadius="3"
-                                            MinWidth="{TemplateBinding ActualWidth}" MaxHeight="200">
-                                        <ScrollViewer>
-                                            <StackPanel IsItemsHost="True"/>
+                                            MinWidth="{TemplateBinding ActualWidth}" MaxHeight="300">
+                                        <ScrollViewer CanContentScroll="True">
+                                            <VirtualizingStackPanel IsItemsHost="True"
+                                                                    VirtualizingPanel.IsVirtualizing="True"
+                                                                    VirtualizingPanel.VirtualizationMode="Recycling"/>
                                         </ScrollViewer>
                                     </Border>
                                 </Popup>
@@ -2165,8 +2347,8 @@ function Initialize-MainApplication {
                 </GroupBox>
 
                 <!-- Group Configuration -->
-                <GroupBox Header="Group Configuration" Style="{StaticResource CompactGroupBox}" Height="365">
-                    <Grid Height="320">
+                <GroupBox Header="Group Configuration" Style="{StaticResource CompactGroupBox}">
+                    <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
@@ -2269,8 +2451,8 @@ function Initialize-MainApplication {
                 </GroupBox>
 
                 <!-- Advanced Options -->
-                <GroupBox Header="Advanced Options" Style="{StaticResource CompactGroupBox}" Height="218" Margin="0,11,0,0">
-                    <Grid Height="150">
+                <GroupBox Header="Advanced Options" Style="{StaticResource CompactGroupBox}" Margin="0,8,0,0">
+                    <Grid>
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
@@ -2398,10 +2580,10 @@ function Initialize-MainApplication {
                 </GroupBox>
 
                 <!-- Info Box -->
-                <GroupBox Grid.Row="2" Header="Quick Guide" Style="{StaticResource InfoGroupBox}" Height="120">
+                <GroupBox Grid.Row="2" Header="Quick Guide" Style="{StaticResource InfoGroupBox}">
                     <StackPanel>
-                        <TextBlock Text="1. Select target OU for group creation   ->   2. Enter an optional group name prefix and number range / if left blank, only one group will be created." FontSize="11" Margin="0,2" TextWrapping="Wrap"/>
-                        <TextBlock Text="3. Choose group type (Security/Distribution) and scope   ->   4. Select users to add to groups (optional)   ->   5. Use Preview to check and create group(s)" FontSize="11" Margin="0,2" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                        <TextBlock Text="1. Select the target OU   ->   2. Enter the group name and an optional number range (leave Start/End blank to create a single group)" FontSize="11" Margin="0,2" TextWrapping="Wrap"/>
+                        <TextBlock Text="3. Choose group type (Security/Distribution) and scope   ->   4. Select users to add (optional)   ->   5. Check with Preview, then Create" FontSize="11" Margin="0,2" FontWeight="SemiBold" TextWrapping="Wrap"/>
                     </StackPanel>
                 </GroupBox>
 
@@ -2534,6 +2716,13 @@ function Initialize-MainApplication {
         $labelAppName.Text = $guiConfig.AppName
         $labelInfo.Text = Format-InfoText -Text $guiConfig.AppInfoText
         $script:window.Title = "$($guiConfig.AppName) $($generalConfig.ScriptVersion) - AD Group Manager"
+
+        # Fenster auf den verfügbaren Arbeitsbereich begrenzen (kleine Displays/hohe DPI-Skalierung)
+        $workArea = [System.Windows.SystemParameters]::WorkArea
+        $script:window.MinWidth = [Math]::Min($script:window.MinWidth, $workArea.Width)
+        $script:window.MinHeight = [Math]::Min($script:window.MinHeight, $workArea.Height)
+        $script:window.Width = [Math]::Min($script:window.Width, $workArea.Width)
+        $script:window.Height = [Math]::Min($script:window.Height, $workArea.Height)
         $footerInfo.Text = "v$($generalConfig.ScriptVersion) | $env:USERDOMAIN\$env:USERNAME"
 
         $websiteUri = $null
