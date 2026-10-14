@@ -1,0 +1,91 @@
+; easyADgroup - Beispielkonfiguration
+; Datei nach "easyADGroups.ini" (im Script-Verzeichnis) kopieren und anpassen.
+; Alle Werte sind optional - fehlende Werte verwenden die im Script eingebetteten Standardwerte.
+; Unbekannte Schlüssel werden ignoriert (und im Log vermerkt).
+; ScriptVersion und LastUpdate können nicht überschrieben werden.
+
+[General]
+; Website im Footer (nur http/https)
+WebsiteURL=https://phinit.de/easyit-tools
+WebsiteURLText=www.phinit.de
+; Debug-Modus ein = 1 | aus = 0
+Debug=0
+
+[LOGGING]
+; Dateiname: logs\LOG_easyADGroups-[yyyy-MM-dd_HH-mm-ss]-[LogFileName]
+LogFileName=easyADGroups.log
+; Log-Datei schreiben ein = 1 | aus = 0
+LogActive=1
+; Mindest-Level: DEBUG | INFO | WARNING | ERROR
+LogLevel=INFO
+
+[GUI]
+AppName=easyADgroup
+AppNameFontSize=20
+AppNameFontColor=White
+AppFont=Segoe UI
+HeaderBackColor=#0078D4
+FooterBackColor=#F8F8F8
+FooterFontColor=#605E5C
+; Platzhalter: ScriptVersion | LastUpdate | Author | WebsiteURLText
+AppInfoText=ScriptVersion | LastUpdate | Author | WebsiteURLText
+
+[AD]
+; Domain Controller (leer = automatisch ermitteln). Alle AD-Aktionen laufen gegen diesen DC.
+ADServer=
+; Maximale Anzahl Benutzer in der Mitgliederliste (0 = alle)
+MaxUsersToLoad=500
+; Fallback-OU für CSV-Zeilen ohne OU (leer = aktuell ausgewählte OU)
+DefaultGroupOU=
+
+[ADGROUPS]
+GroupDescription=Created with easyADgroup
+; Suffixe für den JIRA/Confluence-Modus
+AdditionalSuffixes=RW,R,ADM
+; Feste Mitglieder zu jeder neuen Gruppe hinzufügen ein = 1 | aus = 0
+; ACHTUNG: Keine breiten Gruppen (z. B. "Domänen-Benutzer") eintragen - jedes Mitglied erhält die Berechtigungen der Gruppe!
+GroupMembersAddActive=0
+GroupMembersAdd=
+; Standard-Gruppentyp: Security | Distribution
+DefaultGroupType=Security
+; Standard-Geltungsbereich: Global | Universal | DomainLocal
+DefaultGroupScope=Global
+; Auto-Naming standardmäßig aktivieren ein = 1 | aus = 0
+AutoNamingEnabled=0
+; Namens-Template für Auto-Naming ({NAME} = Basisname, {SUFFIX} = Nummer/Suffix)
+NamingTemplate=GRP_{NAME}_{SUFFIX}
+
+[VALIDATION]
+; Standardzustand der Checkboxen "Names" und "Duplicates"
+ValidateGroupNames=1
+CheckDuplicates=1
+; AD-Limit für den Gruppennamen (cn): 64
+MaxGroupNameLength=64
+; Längere Namen werden für den sAMAccountName gekürzt (0 = nicht kürzen)
+MaxSamAccountNameLength=20
+; In Gruppennamen nicht erlaubte Zeichen
+InvalidCharacters="/\[]:;|=,+*?<>@
+MaxGroupsPerBatch=1000
+
+[ADVANCED]
+; Checkbox "Auto-create OU" verfügbar ein = 1 | aus = 0
+AutoCreateOUEnabled=1
+; Testlauf standardmäßig aktiv ein = 1 | aus = 0
+DefaultDryRun=0
+; Verzögerung der Live-Suche in Millisekunden
+SearchDelayMs=500
+
+[EMAIL]
+; SMTP-Server (leer = Simulation, es wird nichts versendet)
+SMTPServer=
+SMTPPort=25
+; TLS verwenden ein = 1 | aus = 0
+SMTPUseSsl=0
+; Absenderadresse (erforderlich, wenn SMTPServer gesetzt ist)
+FromEmail=
+EmailSubjectPrefix=[easyADgroup]
+; Hinweis: Es werden keine Passwörter gespeichert. Die Anmeldung erfolgt mit dem aktuellen Windows-Konto.
+
+[CSV]
+CSVDelimiter=,
+MaxCSVFileSizeMB=10
