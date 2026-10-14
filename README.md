@@ -1,10 +1,10 @@
-# easyADgroup v0.3.2 - Modern AD Group Manager
+# easyADgroup - Modern AD Group Manager
+
+**Aktuelle Version: 0.3.3** (2026-10-14)
 
 Ein PowerShell-Tool mit Windows 11-inspirierter WPF-GUI für die einfache Erstellung von Active Directory-Gruppen.
 
-![easyADgroup Screenshot](Screenshot_V0.3.1.jpg)
-
-> Änderungen pro Version: siehe [CHANGELOG.md](CHANGELOG.md) · Sicherheitsrichtlinie: [SECURITY.md](SECURITY.md) · Audit-Bericht: [AUDIT.md](AUDIT.md)
+> Änderungen pro Version: siehe [CHANGELOG.md](CHANGELOG.md) · Sicherheitsrichtlinie: [SECURITY.md](SECURITY.md) · Audit-Bericht: [docs/AUDIT.md](docs/AUDIT.md)
 
 ## 🚀 Funktionen
 
@@ -21,6 +21,7 @@ Ein PowerShell-Tool mit Windows 11-inspirierter WPF-GUI für die einfache Erstel
 
 ### 🔍 Benutzersuche
 - **Live-Suche**: Verzögerte Echtzeit-Filterung der Benutzerliste (konfigurierbar, Standard 500 ms)
+- **AD-Suche**: Ist die Liste durch `MaxUsersToLoad` gekürzt, wird direkt im AD gesucht – auch nicht geladene Benutzer werden gefunden
 - **Platzhalter**: `*` und `?` werden unterstützt
 - **Mehrfachauswahl**: Strg/Umschalt+Klick, Alle/Keine – die Auswahl bleibt beim Filtern erhalten
 - **Aktualisierung**: Manuelle Aktualisierung der Benutzerliste
@@ -52,14 +53,15 @@ Ein PowerShell-Tool mit Windows 11-inspirierter WPF-GUI für die einfache Erstel
 ### 📈 Berichtswesen
 - **Berichte**: Übersicht der in der Sitzung erstellten Gruppen (Testlauf-Einträge sind gekennzeichnet)
 - **Export**: Berichte als Textdatei speichern, automatisches Öffnen in Notepad
-- **Logging**: Log-Dateien im Unterordner `logs` mit konfigurierbarem Log-Level
+- **Logging**: Log-Dateien im Unterordner `logs` mit konfigurierbarem Log-Level und automatischer Bereinigung (`LogRetentionDays`)
 
 ## 📋 Systemanforderungen
 
 - **Windows 10/11** oder **Windows Server 2016+**
 - **Windows PowerShell 5.1** oder **PowerShell 7+** (Windows, STA-Modus)
 - **Active Directory PowerShell-Modul** (RSAT bei Windows Client)
-- **Administratorrechte** sowie AD-Berechtigungen zum Erstellen von Gruppen (und ggf. OUs)
+- **AD-Berechtigungen** zum Erstellen von Gruppen (und ggf. OUs) in den Ziel-OUs – lokale Administratorrechte sind nicht erforderlich
+- Schreibrechte im Script-Verzeichnis für `logs` und `templates` (sonst Logging nur in der Konsole)
 
 ## 🛠️ Installation
 
@@ -78,25 +80,27 @@ Import-Module ActiveDirectory
 ```
 
 3. **Konfiguration anpassen (optional)**
-- `easyADGroups.ini.example` nach `easyADGroups.ini` kopieren und nach Bedarf bearbeiten
+- `src\easyADGroups.ini.example` nach `src\easyADGroups.ini` kopieren und nach Bedarf bearbeiten
 - Ohne INI-Datei werden die im Script eingebetteten Standardwerte verwendet
 
 4. **Script ausführen**
 ```powershell
-# Als Administrator ausführen
-.\easyADGroup_V0.3.2.ps1
+cd .\PhinIT.PowerShell_ADGroups\src
+.\easyADGroup.ps1
 ```
 
-> **Hinweis Code-Signatur:** Das Script ist in v0.3.2 nicht signiert. Wenn Ihre Execution Policy signierte Scripts verlangt (`AllSigned`, bzw. `RemoteSigned` bei heruntergeladenen Dateien), das Script vor der Verwendung mit `Set-AuthenticodeSignature` neu signieren.
+> **Hinweis Dateiname:** Der Dateiname enthält keine Versionsnummer. Die Version steht in dieser README, im [CHANGELOG](CHANGELOG.md), im Fenstertitel und im Footer der Anwendung.
+
+> **Hinweis Code-Signatur:** Das Script ist nicht signiert. Wenn Ihre Execution Policy signierte Scripts verlangt (`AllSigned`, bzw. `RemoteSigned` bei heruntergeladenen Dateien), das Script vor der Verwendung mit `Set-AuthenticodeSignature` neu signieren.
 
 ## ⚙️ Konfiguration
 
-Die Konfiguration erfolgt über die optionale Datei `easyADGroups.ini` im Script-Verzeichnis. Alle Schlüssel sind optional; eine vollständige, kommentierte Vorlage ist [`easyADGroups.ini.example`](easyADGroups.ini.example).
+Die Konfiguration erfolgt über die optionale Datei `easyADGroups.ini` im Script-Verzeichnis (`src/`). Alle Schlüssel sind optional; eine vollständige, kommentierte Vorlage ist [`src/easyADGroups.ini.example`](src/easyADGroups.ini.example).
 
 | Abschnitt | Schlüssel | Beschreibung |
 |-----------|-----------|--------------|
 | `[General]` | `WebsiteURL`, `WebsiteURLText`, `Debug` | Footer-Link, Debug-Modus (0/1) |
-| `[LOGGING]` | `LogFileName`, `LogActive`, `LogLevel` | Log-Datei, ein/aus, Mindest-Level (DEBUG/INFO/WARNING/ERROR) |
+| `[LOGGING]` | `LogFileName`, `LogActive`, `LogLevel`, `LogRetentionDays` | Log-Datei, ein/aus, Mindest-Level (DEBUG/INFO/WARNING/ERROR), Aufbewahrung in Tagen (0 = unbegrenzt) |
 | `[GUI]` | `AppName`, `AppNameFontSize`, `AppNameFontColor`, `AppFont`, `HeaderBackColor`, `FooterBackColor`, `FooterFontColor`, `AppInfoText` | Darstellung |
 | `[AD]` | `ADServer`, `MaxUsersToLoad`, `DefaultGroupOU` | Domain Controller (leer = automatisch), max. Benutzer, Fallback-OU für CSV |
 | `[ADGROUPS]` | `GroupDescription`, `AdditionalSuffixes`, `GroupMembersAddActive`, `GroupMembersAdd`, `DefaultGroupType`, `DefaultGroupScope`, `AutoNamingEnabled`, `NamingTemplate` | Gruppen-Standardwerte |
@@ -147,7 +151,7 @@ Bei aktivierter Checkbox **Auto-Naming** wird der Name über `NamingTemplate` ge
 - **Eingabevalidierung**: Ungültige Zeichen, Längen, Kollisionen, Duplikate
 - **LDAP-Escaping**: Benutzereingaben werden in LDAP-Filtern maskiert
 - **Logging**: Alle Aktionen werden im Ordner `logs` protokolliert (nicht versioniert, siehe `.gitignore`)
-- Details: [SECURITY.md](SECURITY.md) und [AUDIT.md](AUDIT.md)
+- Details: [SECURITY.md](SECURITY.md) und [docs/AUDIT.md](docs/AUDIT.md)
 
 ## 🚀 Mögliche Erweiterungen
 
@@ -159,17 +163,26 @@ Bei aktivierter Checkbox **Auto-Naming** wird der Name über `NamingTemplate` ge
 
 ## 📁 Repository-Struktur
 
-| Datei / Ordner | Beschreibung |
-|----------------|--------------|
-| `easyADGroup_V0.3.2.ps1` | Aktuelles Script (XAML ist eingebettet) |
-| `ADGroupsGUI.xaml` | Referenzkopie der eingebetteten GUI-Definition (wird vom Script nicht geladen) |
-| `easyADGroups.ini.example` | Kommentierte Beispielkonfiguration |
-| `# Versions/` | Archiv älterer Versionen |
-| `CHANGELOG.md` | Änderungsprotokoll |
-| `AUDIT.md` | Audit-Bericht (Sicherheit, Performance, Funktionen, GUI) |
-| `SECURITY.md` | Sicherheitsrichtlinie |
-| `CONTRIBUTING.md` | Hinweise für Beiträge |
-| `CODE_OF_CONDUCT.md` | Verhaltenskodex |
+```text
+PhinIT.PowerShell_ADGroups/
+├── src/
+│   ├── easyADGroup.ps1            # Script (GUI/XAML eingebettet)
+│   └── easyADGroups.ini.example   # Kommentierte Beispielkonfiguration
+├── docs/
+│   ├── AUDIT.md                   # Audit-Berichte
+│   └── screenshots/               # Ablage für Screenshots
+├── .github/
+│   ├── ISSUE_TEMPLATE/            # Vorlagen für Bug-Reports und Feature-Wünsche
+│   └── PULL_REQUEST_TEMPLATE.md   # Vorlage für Pull Requests
+├── CHANGELOG.md                   # Änderungsprotokoll
+├── CODE_OF_CONDUCT.md             # Verhaltenskodex
+├── CONTRIBUTING.md                # Hinweise für Beiträge
+├── LICENSE                        # MIT-Lizenz
+├── README.md
+└── SECURITY.md                    # Sicherheitsrichtlinie
+```
+
+Zur Laufzeit legt das Script neben sich die Ordner `logs/` und `templates/` an (nicht versioniert, siehe `.gitignore`). Ältere Versionen sind über die [Git-Historie](https://github.com/PS-PhinIT/PhinIT.PowerShell_ADGroups/commits/main) bzw. die Links im [CHANGELOG](CHANGELOG.md) erreichbar.
 
 ## 🤝 Beitragen
 

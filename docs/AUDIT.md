@@ -1,4 +1,88 @@
-# Audit-Bericht easyADgroup
+# Audit-Berichte easyADgroup
+
+Schweregrade: **Hoch** = Fehlfunktion/Risiko im Normalbetrieb · **Mittel** = Fehlfunktion in Teilbereichen · **Niedrig** = Qualität/Komfort.
+
+Inhalt:
+- [Audit 2 – Version 0.3.3](#audit-2--version-033)
+- [Audit 1 – Version 0.3.2](#audit-1--version-032)
+
+---
+
+## Audit 2 – Version 0.3.3
+
+| | |
+|---|---|
+| **Geprüfte Version** | `easyADGroup_V0.3.2.ps1` (0.3.2) |
+| **Ergebnis-Version** | `src/easyADGroup.ps1` (0.3.3) |
+| **Datum** | 2026-10-14 |
+| **Umfang** | Sicherheit, Performance, Funktionen, Verweise/Dokumentation, GUI, Befehle/Code-Qualität, Repository-Struktur |
+| **Werkzeuge** | Code-Review, PSScriptAnalyzer 1.25, PowerShell-Parser, XML-Prüfung des eingebetteten XAML, Funktionstests mit gemockten AD-Cmdlets |
+
+Alle Befunde wurden in Version 0.3.3 behoben (Status ✅). Änderungen im Detail: [CHANGELOG.md](../CHANGELOG.md).
+
+### 1. Sicherheit
+
+| # | Befund | Schwere | Behebung | Status |
+|---|--------|---------|----------|--------|
+| S10 | `#Requires -RunAsAdministrator` erzwang lokale Administratorrechte, obwohl nur AD-Rechte benötigt werden (Least Privilege). | Mittel | Anforderung entfernt; Logging fällt bei fehlenden Schreibrechten auf die Konsole zurück. | ✅ |
+| S11 | Während langer Vorgänge verarbeitet `Update-UI` auch Eingaben: Schließen, Bericht, Vorlage speichern, CSV-Template, Test-E-Mail usw. konnten parallel (reentrant) ausgelöst werden. | Mittel | Alle Aktionsschaltflächen gesperrt, Schließen des Fensters während eines Vorgangs blockiert, Such-Timer wartet. | ✅ |
+| S12 | Vorlagennamen wie `CON`, `NUL`, `COM1` (reservierte Gerätenamen) und unbegrenzte Länge. | Niedrig | Reservierte Namen werden mit `_` präfixiert, max. 100 Zeichen. | ✅ |
+
+### 2. Performance
+
+| # | Befund | Schwere | Behebung | Status |
+|---|--------|---------|----------|--------|
+| P9 | CSV-Import prüfte/erstellte die OU für jede Zeile erneut. | Niedrig | Jede Ziel-OU wird einmal geprüft bzw. angelegt. | ✅ |
+| P10 | OU-Auswahlliste ohne UI-Virtualisierung (`StackPanel`), langsam bei vielen OUs. | Niedrig | `VirtualizingStackPanel` mit Recycling. | ✅ |
+| P11 | Pro Start eine neue Log-Datei ohne Bereinigung – der Log-Ordner wuchs unbegrenzt. | Niedrig | `LogRetentionDays` (Standard 30, 0 = unbegrenzt). | ✅ |
+
+### 3. Funktionen
+
+| # | Befund | Schwere | Behebung | Status |
+|---|--------|---------|----------|--------|
+| F17 | Benutzersuche filterte nur die geladenen `MaxUsersToLoad` (Standard 500) Benutzer – in größeren Domänen waren Benutzer nicht auffindbar. | Hoch | Bei gekürzter Liste serverseitige Suche (`sAMAccountName`/`displayName`, LDAP-maskiert, Platzhalter). | ✅ |
+| F18 | CSV-Import: nicht vorhandene OUs führten zu einem Fehler pro Zeile; Testlauf mit "Auto-create OU" meldete fehlende OUs nicht. | Mittel | OU-Vorprüfung, verständliche Meldung, Testlauf protokolliert anzulegende OUs. | ✅ |
+| F19 | Ungültige Zahlen in der INI (`MaxGroupsPerBatch`, `MaxGroupNameLength`, `MaxCSVFileSizeMB`, `SMTPPort`) führten zu Ausnahmen bei Validierung/Import/E-Mail. | Mittel | `Get-ConfigInt` mit Standardwert. | ✅ |
+| F20 | Fehlende Spalte `GroupName` bei abweichendem CSV-Trennzeichen (z. B. `;` aus Excel) ohne Hinweis auf die Ursache. | Niedrig | Meldung nennt das konfigurierte Trennzeichen. | ✅ |
+
+### 4. Verweise und Dokumentation
+
+| # | Befund | Schwere | Behebung | Status |
+|---|--------|---------|----------|--------|
+| V7 | README, CONTRIBUTING und Audit verwiesen auf die gelöschte `ADGroupsGUI.xaml`. | Mittel | Verweise entfernt; GUI ist nur im Script eingebettet. | ✅ |
+| V8 | Versionsnummer im Dateinamen (`easyADGroup_V0.3.2.ps1`) – jede Version brach Links und Aufrufe. | Mittel | `src/easyADGroup.ps1`; Version in README/CHANGELOG/Script. | ✅ |
+| V9 | CHANGELOG: Version "0.1.17" war tatsächlich 0.2.7 (Git-Tag `V0.2.7`), fehlende Datumsangaben, Links auf Archivdateien. | Mittel | Anhand Git-Historie und Pull Requests korrigiert, Links auf Commits/Tags/PR. | ✅ |
+| V10 | Archiv `# Versions/` mit alten, fehlerhaften Scripts, alte INI-Dateien und Screenshots im Repository. | Niedrig | Entfernt (über Git-Historie erreichbar); Ordnerstruktur `src/`, `docs/`, `docs/screenshots/`, `.github/`. | ✅ |
+| V11 | Keine Vorlagen für Pull Requests und Issues. | Niedrig | `.github/PULL_REQUEST_TEMPLATE.md`, `.github/ISSUE_TEMPLATE/`. | ✅ |
+
+### 5. GUI
+
+| # | Befund | Schwere | Behebung | Status |
+|---|--------|---------|----------|--------|
+| G8 | Feste Höhen der Gruppenboxen ("Group Configuration", "Advanced Options", "Quick Guide") – Inhalte wurden bei anderer Schrift (`AppFont`) oder DPI abgeschnitten. | Mittel | Automatische Höhe. | ✅ |
+| G9 | Fensterhöhe 1003 px größer als der Arbeitsbereich kleiner Displays. | Niedrig | Größe wird auf den Arbeitsbereich begrenzt. | ✅ |
+| G10 | Vorlagen-Speichern über WinForms-`InputBox` (Microsoft.VisualBasic) – nicht dem Hauptfenster zugeordnet, konnte dahinter verschwinden. | Niedrig | WPF-Dialog mit Owner. | ✅ |
+| G11 | Kurzanleitung bezeichnete den Gruppennamen als optional. | Niedrig | Text korrigiert. | ✅ |
+
+### 6. Befehle und Code-Qualität
+
+| # | Befund | Schwere | Behebung | Status |
+|---|--------|---------|----------|--------|
+| B6 | Abhängigkeit `Microsoft.VisualBasic` nur für ein Eingabefeld. | Niedrig | Entfernt. | ✅ |
+| B7 | Mehrfach `[int]`-Casts auf Konfigurationswerte ohne Prüfung. | Niedrig | Zentrale Funktion `Get-ConfigInt`. | ✅ |
+
+PSScriptAnalyzer nach der Behebung: keine Fehler; verbleibende Hinweise wie in Audit 1 (`PSAvoidUsingWriteHost`, `PSUseShouldProcessForStateChangingFunctions` für GUI-interne Hilfsfunktionen).
+
+### 7. Offene Punkte / Empfehlungen
+
+- **Code-Signatur:** Script nach Review mit dem eigenen Zertifikat signieren.
+- **Git-Tags:** Releases künftig taggen (z. B. `V0.3.3`), damit Changelog-Links auf feste Stände zeigen.
+- **Git-Historie:** Die in Audit 1 entfernte Log-Datei (interne Pfade/IP) ist weiterhin in der Historie vorhanden; bei Bedarf bereinigen (z. B. `git filter-repo`).
+- **Test in einer AD-Testumgebung:** GUI und AD-Aufrufe konnten nicht gegen ein echtes Active Directory ausgeführt werden; Logik wurde mit gemockten AD-Cmdlets geprüft.
+
+---
+
+## Audit 1 – Version 0.3.2
 
 | | |
 |---|---|
@@ -8,11 +92,9 @@
 | **Umfang** | Sicherheit, Performance, Funktionen, Verweise/Dokumentation, GUI, Befehle/Code-Qualität, Repository |
 | **Werkzeuge** | Code-Review, PSScriptAnalyzer 1.25, PowerShell-Parser, Funktionstests der Logik mit gemockten AD-Cmdlets |
 
-Schweregrade: **Hoch** = Fehlfunktion/Risiko im Normalbetrieb · **Mittel** = Fehlfunktion in Teilbereichen · **Niedrig** = Qualität/Komfort.
+Alle Befunde wurden in Version 0.3.2 behoben (Status ✅). Dateinamen und Pfade entsprechen dem damaligen Stand (seit 0.3.3: `src/easyADGroup.ps1`, Archiv `# Versions` und `ADGroupsGUI.xaml` entfernt).
 
-Alle Befunde wurden in Version 0.3.2 behoben (Status ✅). Änderungen im Detail: [CHANGELOG.md](CHANGELOG.md).
-
-## 1. Sicherheit
+### 1. Sicherheit
 
 | # | Befund | Schwere | Behebung | Status |
 |---|--------|---------|----------|--------|
@@ -26,7 +108,7 @@ Alle Befunde wurden in Version 0.3.2 behoben (Status ✅). Änderungen im Detail
 | S8 | Footer-Hyperlink ohne Handler; künftige Links ohne Schemaprüfung. | Niedrig | Handler öffnet ausschließlich `http`/`https`. | ✅ |
 | S9 | Fehler beim Hinzufügen von Mitgliedern im CSV-Import mit `-ErrorAction SilentlyContinue` verschluckt (fehlende Berechtigungen unbemerkt). | Mittel | Fehler werden protokolliert und im Ergebnis angezeigt. | ✅ |
 
-## 2. Performance
+### 2. Performance
 
 | # | Befund | Schwere | Behebung | Status |
 |---|--------|---------|----------|--------|
@@ -39,7 +121,7 @@ Alle Befunde wurden in Version 0.3.2 behoben (Status ✅). Änderungen im Detail
 | P7 | Lange Vorgänge im UI-Thread ohne Aktualisierung → Fenster "friert ein", Fortschrittsbalken wurde nie sichtbar aktualisiert. | Mittel | Dispatcher-Flush nach Status-/Fortschrittsänderungen, Buttons während der Ausführung deaktiviert (auch gegen Doppelklick). | ✅ |
 | P8 | OU-Auto-Erstellung wurde für jede Gruppe erneut geprüft. | Niedrig | Einmal vor der Schleife. | ✅ |
 
-## 3. Funktionen
+### 3. Funktionen
 
 | # | Befund | Schwere | Behebung | Status |
 |---|--------|---------|----------|--------|
@@ -60,7 +142,7 @@ Alle Befunde wurden in Version 0.3.2 behoben (Status ✅). Änderungen im Detail
 | F15 | Konfigurationswerte ohne Wirkung: `ADServer`, `LogActive`, `LogLevel`, `DefaultGroupType/Scope`, `DefaultDryRun`, `AutoCreateOUEnabled`, GUI-Farben/Schrift. | Mittel | Alle unterstützten Werte werden angewendet; nicht genutzte Schlüssel entfernt. | ✅ |
 | F16 | Platzhalterersetzung im Info-Text per Regex (Sonderzeichen wie `$1` in Werten wurden interpretiert). | Niedrig | Literale Ersetzung. | ✅ |
 
-## 4. Verweise und Dokumentation
+### 4. Verweise und Dokumentation
 
 | # | Befund | Schwere | Behebung | Status |
 |---|--------|---------|----------|--------|
@@ -71,7 +153,7 @@ Alle Befunde wurden in Version 0.3.2 behoben (Status ✅). Änderungen im Detail
 | V5 | `ADGroupsGUI.xaml` wird vom Script nicht geladen und wich von der eingebetteten GUI ab. | Niedrig | Synchronisiert und in der README als Referenzkopie gekennzeichnet. | ✅ |
 | V6 | Uneinheitliche Website-Angaben (`www.PSscripts.de`, GitHub-Link, `phinit.de`). | Niedrig | Einheitlich `phinit.de`, konfigurierbar. | ✅ |
 
-## 5. GUI
+### 5. GUI
 
 | # | Befund | Schwere | Behebung | Status |
 |---|--------|---------|----------|--------|
@@ -83,7 +165,7 @@ Alle Befunde wurden in Version 0.3.2 behoben (Status ✅). Änderungen im Detail
 | G6 | Tippfehler "Seperator". | Niedrig | "Separator". | ✅ |
 | G7 | Große Vorschau-/Ergebnislisten sprengten die MessageBox. | Niedrig | Auf 30 bzw. 20 Einträge begrenzt mit Hinweis auf weitere. | ✅ |
 
-## 6. Befehle und Code-Qualität
+### 6. Befehle und Code-Qualität
 
 | # | Befund | Schwere | Behebung | Status |
 |---|--------|---------|----------|--------|
@@ -95,9 +177,9 @@ Alle Befunde wurden in Version 0.3.2 behoben (Status ✅). Änderungen im Detail
 
 PSScriptAnalyzer nach der Behebung: keine Fehler; verbleibende Hinweise sind `PSAvoidUsingWriteHost` (gewollte Konsolenausgabe) und `PSUseShouldProcessForStateChangingFunctions` für GUI-interne Hilfsfunktionen (`Set-`/`Update-`/`Reset-` auf Formular-Elementen, keine Systemänderung).
 
-## 7. Offene Punkte / Empfehlungen
+### 7. Offene Punkte / Empfehlungen
 
 - **Code-Signatur:** Script nach Review mit dem eigenen Zertifikat neu signieren.
 - **Git-Historie:** Die entfernte Log-Datei (interne Pfade/IP) ist in der Historie weiterhin vorhanden. Bei Bedarf Historie bereinigen (z. B. `git filter-repo`).
-- **Archiv `# Versions`:** Ältere Versionen wurden nicht geändert und enthalten die oben genannten Befunde; nicht produktiv verwenden.
+- **Archiv `# Versions`:** Ältere Versionen wurden nicht geändert und enthalten die oben genannten Befunde; nicht produktiv verwenden. *(Erledigt in 0.3.3: Archiv entfernt.)*
 - **Test in einer AD-Testumgebung:** Die GUI und AD-Aufrufe konnten im Audit nicht gegen ein echtes Active Directory ausgeführt werden; die Logik wurde mit gemockten AD-Cmdlets geprüft. Vor dem produktiven Einsatz einen Testlauf und eine Erstellung in einer Test-OU durchführen.
